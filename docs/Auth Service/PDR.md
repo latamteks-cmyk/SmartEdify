@@ -1,236 +1,338 @@
+# Especificaciones de Diseño — Auth Service
 
-# ✅ **SMARTEDIFY v.0 – DOCUMENTO DE PLANIFICACIÓN Y REQUISITOS**  
-## **Auth Service — Infraestructura de Identidad Digital para Comunidades Legales en LatAm**
+## Alcance
 
-> **Versión**: v.1.0 (Definitiva)  
-> **Fecha**: Abril 2025  
-> **Autor**: Software Architect, SmartEdify  
-> **Aprobado por**: CPO, Head of Security, Legal Counsel, Engineering Lead  
+Autenticación, MFA y emisión/validación de tokens para Web App, App Móvil y Web Soporte. Estándares OAuth2/OIDC. Validación en API Gateway y servicios. Propaga `tenant_id`, `roles`, `scopes`.
 
----
+## Requisitos
 
-## ✅ **1. Introducción y Visión**
+* OIDC completo: `authorize`, `token`, `userinfo`, `jwks`, `introspection`, `revocation`, `discovery`.
+* Flujos: Authorization Code + PKCE (móvil y web), Client Credentials (machine-to-machine).
+* MFA: TOTP y WebAuthn. Step-up por acción sensible.
+* Sesiones con rotación de refresh. Detección de reuse.
+* Revocación por usuario, cliente o tenant.
+* Auditoría de eventos de seguridad.
+* Disponibilidad 99.9%, p95 < 150 ms en `token`/`introspect`.
 
-### ¿Qué estamos construyendo?
-Estamos construyendo **Auth Service**, el microservicio central de identidad digital de SmartEdify: una plataforma SaaS multi-tenant que permite a comunidades inmobiliarias en Latinoamérica gestionar sus asambleas, pagos y operaciones mediante una experiencia de acceso **sin contraseñas, legalmente válida y diseñada para personas reales — no para ingenieros**.
+## Políticas de tokens
 
-### ¿Por qué lo hacemos?
-**El problema real:**  
-En LatAm, los condominios viven en un limbo entre lo analógico y lo digital. Los propietarios olvidan contraseñas, los síndicos usan Excel, las asambleas se hacen con papeles y firmas manuscritas, y las leyes locales (como la Ley N° 27157 en Perú) exigen que solo los propietarios puedan votar o ser presidentes — pero nadie verifica quién es quién en la app.  
+* Access Token: JWT firmado (ES256 o RS256). TTL: 10 min. Áreas: `aud` por servicio; `scope` granular.
+* Refresh Token: opaco, rotación obligatoria, TTL: 30 días rolling, reuse-detection → revoca cadena.
+* ID Token: JWT OIDC con `nonce`, TTL: 10 min.
+* JTI único, `iat`, `nbf`, `exp` estrictos. Clock skew: ±60s.
+* Reclamos mínimos: `sub`, `tenant_id`, `roles`, `scp`, `amr` (MFA), `auth_time`, `jti`.
 
-Los sistemas actuales (CondoControl, MiCondominio, etc.) son complejos, caros y **ignoran la ley**. No hay confianza. Nadie sabe si quien vota realmente es dueño.  
+## MFA y Step-up
 
-**Nuestra solución:**  
-Un servicio de autenticación que:  
-- **Elimina contraseñas** usando WhatsApp, FIDO2 o biometría.  
-- **Garantiza legalmente** que solo los propietarios pueden tener derechos.  
-- **Vincula identidad digital con propiedad física** (unidad → usuario → tenant).  
-- **Cumple con la ley peruana y latinoamericana sin que el usuario tenga que leerla**.  
+* Enrolamiento: TOTP (RFC6238), WebAuthn (resident/non-resident).
+* Verificación MFA por defecto en login. Step-up condicionado por políticas (ej.: `assembly:minutes:publish`, `assembly:manual:write`).
+* `amr` incluye `pwd`, `otp`, `webauthn`. `acr` opcional.
 
-> 🔥 **Visión**:  
-> *“Que cada vecino en Perú, Colombia o México pueda acceder a su condominio, votar en su asamblea y pagar su cuota… respondiendo ‘SÍ’ por WhatsApp, sin recordar nada.”*
+## Gestión de sesión
 
----
+* Estado de sesión en Redis (stateless access, stateful refresh).
+* Lista de revocación por `jti` y por “session family”.
+* Reuse token detector: si refresh reutilizado → revoca familia y fuerza relogin.
 
-## ✅ **2. Objetivos y Metas**
+## Seguridad
 
-### 🎯 Objetivos de Negocio
-| Objetivo | Meta | Plazo |
-|---------|------|-------|
-| Lanzar MVP en Perú con primeras 3 comunidades piloto | 3 condominios activos con 100+ usuarios | Mes 3 |
-| Alcanzar 1,000 usuarios activos mensuales (MAU) | 1,000 usuarios únicos logueados/mes | Mes 6 |
-| Convertir 15% de usuarios en “usuarios leales” | NPS ≥ 45 | Mes 6 |
-| Posicionar a SmartEdify como la única plataforma legalmente certificada en LatAm | Certificación APDP (Perú) obtenida | Mes 5 |
+* Firmas con KMS/HSM. JWKS rotado cada 90 días. Key rollover con doble publicación.
+* TLS 1.3, HSTS, SameSite=strict para cookies de first-party.
+* Rate limit por IP/tenant/cliente. Bruteforce guard.
+* Device-binding opcional para móvil (attestation + keypair local).
 
-### 🚀 Objetivos de Producto
-| Objetivo | Meta | Plazo |
-|----------|------|-------|
-| Reducir el tiempo de inicio de sesión a menos de 8 segundos | 90% de los usuarios logueados en ≤ 8s | Mes 3 |
-| Eliminar el 95% de tickets de “olvidé mi contraseña” | De 40% a <2% del total de soporte | Mes 6 |
-| Lograr que el 85% de los logins sean sin contraseña | WhatsApp + FIDO2 como método principal | Mes 6 |
-| Garantizar que el 100% de las actas digitales sean válidas ante autoridades | 100% de actas generadas verificables con QR | Mes 3 |
+## Datos (modelo lógico)
 
----
+* `users(id, tenant_id, email, phone, status, pwd_hash, pwd_salt, created_at)`
+* `user_roles(user_id, tenant_id, role)` // `propietario`, `moderador`, `secretario`, `admin_condominio`, `soporte_local`, `noc`
+* `clients(id, tenant_id, type, redirect_uris, pkce_required, scopes)`
+* `consents(user_id, client_id, scope, granted_at)`
+* `mfa_enrollments(user_id, type[TOTP|WebAuthn], secret_or_public_key, created_at, last_used_at)`
+* `sessions(id, user_id, client_id, tenant_id, created_at, last_seen_at, revoked_at, reason)`
+* `refresh_tokens(id, session_id, rt_hash, status[active|rotated|revoked], created_at, expires_at)`
+* `revocation_list(jti, type[access|refresh], reason, created_at, expires_at)`
+* `audit_security(id, actor, event, ip, ua, tenant_id, details_json, ts)`
 
-## ✅ **3. Métricas de Éxito (KPIs)**
+Índices: `users(tenant_id,email)`, `refresh_tokens(session_id,status)`, `revocation_list(jti)`, `audit_security(tenant_id,ts)`.
 
-| Tipo | Métrica | Meta | Frecuencia |
-|------|--------|------|------------|
-| **Adopción** | Tasa de login exitoso (primer intento) | ≥ 85% | Diaria |
-| **Engagement** | Usuarios activos semanales (WAU) | ≥ 70% de MAU | Semanal |
-| **Retención** | Churn Rate (usuarios que abandonan) | ≤ 5% mensual | Mensual |
-| **Satisfacción** | Net Promoter Score (NPS) | ≥ 45 | Trimestral |
-| **Legalidad** | % de actas validadas por jurisdicción | 100% | Diaria |
-| **Eficiencia** | Tiempo promedio de login | ≤ 8 segundos | Diaria |
-| **Costo** | Costo por usuario activo (CPA) | ≤ $0.80 | Mensual |
+## Flujos clave (BA/Dev)
 
-> 💡 **Regla de oro**:  
-> Si más del 15% de los usuarios necesita ayuda para iniciar sesión, **hemos fallado**.
+### Login OIDC + MFA (Code+PKCE)
 
----
+```mermaid
+sequenceDiagram
+  autonumber
+  actor User
+  participant Client as Web/App
+  participant Auth as Auth Service
+  participant Redis as Session Store
+  User->>Client: /login
+  Client->>Auth: /authorize?response_type=code&code_challenge
+  Auth->>User: MFA (TOTP/WebAuthn)
+  User-->>Auth: Verificado
+  Auth-->>Client: redirect_uri?code=...
+  Client->>Auth: /token (code_verifier)
+  Auth->>Redis: crear sesión + refresh rotado
+  Auth-->>Client: id_token + access_token + refresh_token
+```
 
-## ✅ **4. Perfiles de Usuario (User Personas)**
+### Step-up MFA
 
-### 👨‍👩‍👧‍👦 **Juan Pérez — Propietario Mayor (68 años)**
-- **Quién es**: Dueño de un departamento en Lima. Usa WhatsApp todos los días. No sabe qué es un “JWT”.  
-- **Dolor**: Olvida contraseñas. Le da miedo hacer clic en botones desconocidos.  
-- **Meta**: Ver su recibo y votar en la asamblea sin tener que llamar al administrador.  
-- **Comportamiento clave**:  
-  - Responde “SÍ” a mensajes de WhatsApp.  
-  - Nunca descarga apps nuevas.  
-  - Confía en lo que ve en su pantalla de celular.  
-- **Frase típica**:  
-  > *“¿Me mandan un mensaje y yo digo ‘Sí’? Entonces sí.”*
+* Trigger por `scope` sensible o cambio de contexto (`auth_time > N min`).
+* Respuesta 401 con `www-authenticate: claims={"userinfo":{"acr":{"values":["urn:mfa:strong"]}}}`.
 
-### 🏢 **María González — Síndica (55 años)**
-- **Quién es**: Administradora de 3 condominios. Usa Excel. No tiene equipo de IT.  
-- **Dolor**: Tiene 200 cuentas que manejar. Cada mes pierde 3 días cargando datos. Teme cometer errores legales.  
-- **Meta**: Subir 100 usuarios en 5 minutos, convocar una asamblea con un click, y tener pruebas legales de que todo está bien.  
-- **Comportamiento clave**:  
-  - Necesita que todo sea “fácil, rápido y seguro”.  
-  - No quiere aprender software nuevo. Quiere que el software aprenda de ella.  
-  - Valora más el sello “Cumple con la Ley” que las animaciones.  
-- **Frase típica**:  
-  > *“Si esto me evita que me multen por una asamblea mal hecha, vale cualquier cosa.”*
+### Refresh Rotation
 
----
+* Cliente invoca `/token` con `grant_type=refresh_token`.
+* Emite nuevo par AT/RT. RT anterior → `rotated`. Reuse → revoca familia.
 
-## ✅ **5. Requisitos de Funcionalidades (MVP)**
+### Revocación
 
-### ✅ **Feature 1: Login por WhatsApp como método principal**
+* Usuario: `/oauth/revoke` por sesión o todos los dispositivos.
+* Admin tenant: revoca por `user_id` o por `client_id`.
+* Efecto inmediato en introspection. AT sigue válido hasta exp salvo lista de jti.
 
-#### 📜 User Story  
-> *Como Juan Pérez (propietario), quiero iniciar sesión en SmartEdify respondiendo “SÍ” a un mensaje de WhatsApp, para poder ver mi cuota y votar sin recordar ninguna contraseña.*
+## Observabilidad
 
-#### ✅ Criterios de Aceptación
-- [ ] El sistema envía un OTP por WhatsApp cuando se hace clic en “Iniciar con WhatsApp”.  
-- [ ] El usuario responde “SÍ”, “NO” o “ABSTENCIÓN” en el chat.  
-- [ ] Al responder “SÍ”, se genera un JWT válido y se redirige automáticamente al dashboard.  
-- [ ] No se muestra ningún campo de texto para email o contraseña.  
-- [ ] Se emite evento `user.login.success` con canal = “whatsapp”.  
-- [ ] Si el número no está registrado, se redirige a flujo de registro automático.  
-- [ ] Fallo en 3 intentos → bloqueo temporal + notificación por SMS.  
+* Métricas: `auth_login_total`, `mfa_challenge_total`, `token_issued_total`, `token_revoked_total`, `introspect_latency_ms`, `refresh_reuse_detected_total`.
+* Tracing OTel con `tenant_id`, `client_id`, `session_id`.
+* Logs firmados en `audit_security`.
 
 ---
 
-### ✅ **Feature 2: Asignación legal de presidente (solo propietarios)**
+# Arquitectura del Sistema — Auth Service
 
-#### 📜 User Story  
-> *Como María González (síndica), quiero designar a un propietario como presidente del condominio, para que pueda convocar asambleas sin riesgo de que alguien no dueño tome decisiones legales.*
+## Vista de contenedores
 
-#### ✅ Criterios de Aceptación
-- [ ] Solo los usuarios con rol `owner` en alguna unidad del tenant aparecen en la lista de candidatos.  
-- [ ] Al seleccionar un propietario, se envía un link por WhatsApp: *“[Nombre] te ha designado presidente. Haz clic para aceptar.”*  
-- [ ] El propietario debe aceptar el rol respondiendo “SÍ” por WhatsApp y activando MFA (WhatsApp o FIDO2).  
-- [ ] Al aceptar, se genera una **acta digital firmada** con hash en IPFS y QR de verificación.  
-- [ ] La acta incluye: nombre del presidente, unidad, fecha, firma digital y texto legal: *“Según la Ley N° 27157”*.  
-- [ ] El antiguo presidente pierde el rol automáticamente.  
-- [ ] Se emite evento `president.transfer.completed` con documentación vinculada.  
+```mermaid
+flowchart LR
+  subgraph Edge
+    APIGW[API Gateway/WAF\nJWT check, rate limit]
+  end
+  subgraph AuthCluster
+    AUTHAPI[Auth API\n(REST/OIDC)]
+    AUTHCORE[Auth Core\n(OAuth2/OIDC, MFA, Sessions)]
+    KEY[Key Manager\n(JWK Rotate, KMS/HSM)]
+    INTROS[Token Introspection]
+    ADMIN[Admin Console\n(tenants, clients, roles)]
+    WORK[Async Workers\n(revocations, audit export)]
+  end
+  REDIS[(Redis Cluster)]
+  PG[(PostgreSQL)]
+  KMS[HSM/KMS]
+  PROM[OTel/Prom/Grafana]
+  APIGW-->AUTHAPI
+  AUTHAPI-->AUTHCORE
+  AUTHCORE-->REDIS
+  AUTHCORE-->PG
+  AUTHCORE-->KEY
+  KEY-->KMS
+  AUTHAPI-->INTROS
+  AUTHAPI-->ADMIN
+  AUTHAPI-->PROM
+```
 
----
+## Tecnologías
 
-### ✅ **Feature 3: Actas digitales verificables (con firma legal)**
+* Runtime: Go o Kotlin.
+* Crypto: JOSE, FIDO2/WebAuthn, TOTP.
+* Store: PostgreSQL, Redis.
+* Keys: KMS/HSM.
+* Deploy: Kubernetes, autoscaling.
+* Cache: JWKS en gateway y servicios; TTL 15 min.
 
-#### 📜 User Story  
-> *Como Juan Pérez, quiero ver una acta de asamblea y saber que es legalmente válida, sin necesidad de imprimir ni buscar firmas físicas.*
+## Integraciones externas
 
-#### ✅ Criterios de Aceptación
-- [ ] Cada acta generada (elección, transferencia, aprobación de gastos) se exporta como PDF.  
-- [ ] El PDF incluye:  
-  - Firma digital RSA generada desde HSM.  
-  - Hash único almacenado en IPFS.  
-  - QR visible que lleva a `verify.smartedify.dev/acta/[id]`.  
-- [ ] Al escanear el QR, se muestra:  
-  - “Firma válida” / “Firma inválida”  
-  - “Emitida por SmartEdify. Cumple con la Ley N° 27157.”  
-- [ ] El hash y la firma están vinculados a un evento auditado en bitácora inmutable.  
-- [ ] El archivo PDF es descargable y compatible con SUNARP.  
-- [ ] Se emite evento `acta.signed` con IPFS CID y metadata.  
+* API Gateway: valida JWT, pasa `X-Tenant-ID`.
+* Servicios SmartEdify: `introspection` opcional si política requiere.
+* Web/App: OIDC/OAuth2.
+* Notificaciones MFA opcionales vía Communication Service (fallback).
 
----
+## Resiliencia
 
-### ✅ **Feature 4: Acceso dinámico por unidad (no por cuenta)**
-
-#### 📜 User Story  
-> *Como Juan Pérez, quiero ver mis dos departamentos (Torre A y Torre B) en la misma app, y cambiar entre ellos sin tener que cerrar y volver a entrar.*
-
-#### ✅ Criterios de Aceptación
-- [ ] Un mismo usuario puede tener múltiples roles (`owner`, `tenant`, `family_member`) en distintas unidades.  
-- [ ] En el dashboard, el título principal es: *“Torre A, Depto 12 — Propietario”*.  
-- [ ] Existe un selector desplegable: *“Cambiar a: Torre B, Depto 45”*.  
-- [ ] Al cambiar, el JWT sigue siendo el mismo, pero el contexto cambia: `unit_id` y `tenant_id` se actualizan.  
-- [ ] El motor de autorización valida permisos en tiempo real contra `user_unit_roles` (no contra claims del token).  
-- [ ] Si intenta acceder a una unidad donde no es propietario → 403 Forbidden.  
-- [ ] Se registra en auditoría: `context.switched: from_unit=X to_unit=Y`.
-
----
-
-### ✅ **Feature 5: Soporte humano integrado (para quienes no entienden tecnología)**
-
-#### 📜 User Story  
-> *Como María González, quiero poder presionar un botón y hablar con alguien de SmartEdify si algo no funciona, sin tener que esperar horas en soporte.*
-
-#### ✅ Criterios de Aceptación
-- [ ] En la app web y móvil, existe un botón flotante: **“¿Necesitas ayuda?”**  
-- [ ] Al presionarlo, se inicia una llamada telefónica automática al soporte técnico de SmartEdify (número local en Perú).  
-- [ ] La llamada está pre-cargada con:  
-  - Nombre del usuario  
-  - Tenant ID  
-  - Última acción realizada  
-- [ ] El agente ve la pantalla del usuario en tiempo real (con consentimiento explícito).  
-- [ ] La llamada se registra en bitácora como evento: `support.requested` con duración y resultado.  
-- [ ] No se requiere crear ticket previo.  
+* Circuit breakers hacia DB/Redis/KMS.
+* JWKS dual publish para rollover.
+* Tolerancia a partición: acceso sigue stateless; refresh puede fallar con retry.
 
 ---
 
-## ✅ **6. Requisitos No Funcionales**
+# Documentación de la API — Auth Service
 
-| Categoría | Requisito | Detalle |
-|----------|----------|---------|
-| **Rendimiento** | Tiempo de respuesta | ≤ 800ms en login, ≤ 120ms en validación de permisos. |
-| | Disponibilidad | 99.95% uptime. SLA garantizado. |
-| | Escalabilidad | Soportar 10K transacciones por minuto. Auto-scaling en AWS. |
-| **Seguridad** | Cifrado | AES-256-GCM en reposo, TLS 1.3 en tránsito. |
-| | Autenticación | DPoP obligatorio para APIs externas. MTLS para microservicios internos. |
-| | Privacidad | Nada de datos sensibles (contraseñas, secretos TOTP) almacenados en texto plano. |
-| | Cumplimiento | Cumple Ley N° 27157 (Perú), LPDP (Ley 29733), GDPR, NIST SP 800-63B. |
-| | Auditoría | Bitácora inmutable con cadena de hashes (WORM DB). Todos los eventos firmados. |
-| **Escalabilidad** | Multi-tenant | Soporta 1000+ tenants simultáneos. Datos aislados por `tenant_id`. |
-| | Internacionalización | Soporte para español, portugués. Localización de políticas por país. |
-| | Integración | API REST + OpenAPI 3.1. SDKs publicados en npm y PyPI. |
+## Endpoints OIDC/OAuth2
+
+* `GET /.well-known/openid-configuration`
+* `GET /oauth/authorize`
+* `POST /oauth/token`
+* `POST /oauth/introspect`
+* `POST /oauth/revoke`
+* `GET /oauth/jwks`
+* `GET /oauth/userinfo`
+
+## MFA
+
+* `POST /mfa/enroll` (TOTP o WebAuthn)
+* `POST /mfa/verify`
+* `GET /mfa/methods`
+* `DELETE /mfa/methods/{id}`
+
+## Administración (tenant/cliente/roles)
+
+* `POST /tenants` · `GET /tenants/{id}`
+* `POST /clients` · `GET /clients/{id}` · `PATCH /clients/{id}`
+* `POST /roles/assign` · `DELETE /roles/assign`
+* `POST /sessions/{id}/revoke` · `POST /sessions/revoke-by-user`
+
+## Introspección ligera para Gateway/Servicios
+
+* `POST /oauth/introspect`
+
+  * Body: `token`, `token_type_hint`.
+  * Respuesta: `{ active, sub, tenant_id, scope, exp, iat, jti, amr }`.
+
+## OpenAPI 3.1 (extracto clave)
+
+```yaml
+openapi: 3.1.0
+info: {title: Auth Service, version: "1.0.0"}
+servers: [{url: https://auth.smartedify.com}]
+paths:
+  /.well-known/openid-configuration:
+    get: {summary: Discovery, responses: {"200": {description: OK}}}
+  /oauth/authorize:
+    get:
+      summary: Authorization Code + PKCE
+      parameters:
+        - {in: query, name: response_type, schema: {type: string, enum: [code]}, required: true}
+        - {in: query, name: client_id, schema: {type: string}, required: true}
+        - {in: query, name: redirect_uri, schema: {type: string, format: uri}, required: true}
+        - {in: query, name: scope, schema: {type: string}, required: true}
+        - {in: query, name: code_challenge, schema: {type: string}}
+        - {in: query, name: code_challenge_method, schema: {type: string, enum: [S256]}}
+        - {in: query, name: state, schema: {type: string}}
+        - {in: query, name: nonce, schema: {type: string}}
+      responses: {"302": {description: Redirect with code}}
+  /oauth/token:
+    post:
+      summary: Token & Refresh rotation
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                grant_type: {type: string, enum: [authorization_code, refresh_token, client_credentials]}
+                code: {type: string}
+                code_verifier: {type: string}
+                refresh_token: {type: string}
+                client_id: {type: string}
+                client_secret: {type: string}
+      responses:
+        "200":
+          description: Tokens
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token: {type: string}
+                  token_type: {type: string, example: Bearer}
+                  expires_in: {type: integer}
+                  refresh_token: {type: string}
+                  id_token: {type: string}
+  /oauth/introspect:
+    post:
+      summary: Introspect token
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                token: {type: string}
+                token_type_hint: {type: string, enum: [access_token, refresh_token, id_token]}
+      responses:
+        "200":
+          description: Resultado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  active: {type: boolean}
+                  sub: {type: string}
+                  tenant_id: {type: string}
+                  scope: {type: string}
+                  exp: {type: integer}
+                  iat: {type: integer}
+                  jti: {type: string}
+                  amr: {type: array, items: {type: string}}
+  /oauth/revoke:
+    post:
+      summary: Revocar token
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                token: {type: string}
+                token_type_hint: {type: string}
+      responses: {"200": {description: OK}}
+  /oauth/jwks:
+    get: {summary: JWKS, responses: {"200": {description: OK}}}
+  /oauth/userinfo:
+    get:
+      summary: UserInfo
+      security: [{bearerAuth: []}]
+      responses: {"200": {description: OK}}
+  /mfa/enroll:
+    post:
+      summary: Enrolar MFA
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type: {type: string, enum: [totp, webauthn]}
+      responses: {"200": {description: Enrolado}}
+  /mfa/verify:
+    post:
+      summary: Verificar MFA / Step-up
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type: {type: string, enum: [totp, webauthn]}
+                code: {type: string}
+      responses: {"200": {description: OK}}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+```
+
+## Scopes y ejemplos
+
+* Scopes base: `openid profile email tenant.read roles.read`.
+* Scopes de aplicación: `assembly:read`, `assembly:write`, `assembly:vote`, `assembly:manual:write`, `assembly:minutes:publish`.
+* Ejemplo `amr`: `["pwd","otp"]` o `["pwd","webauthn"]`.
+
+## Reglas de claims
+
+* `roles`: lista controlada por tenant.
+* `scp`: espacios separados `"assembly:read assembly:vote"`.
+* `tenant_id`: obligatorio.
+* `auth_time`: epoch del último MFA.
+
+## Errores estándar
+
+* `invalid_request`, `invalid_client`, `invalid_grant`, `invalid_scope`, `interaction_required`, `mfa_required`, `reuse_detected`.
 
 ---
 
-## ✅ **7. Suposiciones y Fuera de Alcance (Out of Scope)**
-
-### ✅ Suposiciones
-- Los usuarios tienen acceso a WhatsApp o un teléfono móvil.  
-- Las comunidades ya tienen una lista de propietarios (no necesitamos validar con SUNARP en MVP).  
-- El cliente (síndico o administradora) tiene capacidad para enviar mensajes por WhatsApp Business API.  
-- La ley peruana será nuestra referencia base — otras jurisdicciones se adaptarán después.  
-- Los usuarios no quieren “aprender a usar una app”. Quieren que la app aprenda a usarlos.
-
-### ❌ Fuera de Alcance (No construiremos en esta fase)
-| Item | Razón |
-|------|-------|
-| App nativa iOS/Android | Usaremos PWA (Progressive Web App) para evitar tiendas de apps y reducir fricción. |
-| Integración directa con bancos | Usaremos APIs de pago estandarizadas (Mercado Pago, PSE, Pix). |
-| Sistema de nómina o payroll | Ese es un módulo separado (Payroll Service). |
-| Blockchain como base de datos | Usamos IPFS para inmutabilidad — blockchain añade costo innecesario. |
-| Chatbot de IA para resolver dudas | Soporte humano es más efectivo y confiable en este mercado. |
-| Gestión de mantenimiento o RFP | Son módulos independientes (Maintenance Service). |
-| Registro de propietarios con DNI en línea | Validación manual en MVP. Futuro: integración con SUNARP. |
-
----
-
-## ✅ **CONCLUSIÓN FINAL — DECLARACIÓN DEL PRODUCT MANAGER**
-
-> “No estamos construyendo otra app de condominios.  
-> Estamos construyendo la **primera infraestructura de identidad digital que hace que la ley funcione en el mundo real.**  
->   
-> Si Juan puede votar respondiendo ‘SÍ’ por WhatsApp, y María puede generar una acta que valide ante una municipalidad...  
->   
-> …entonces hemos ganado.  
->   
-> Esta no es una función. Es una revolución.  
-> Y empezamos hoy.”
+¿Necesitas este documento exportado a archivos separados (`/docs/design/auth/…`) y plantillas de configuración para el Gateway (políticas de scopes por ruta)?
