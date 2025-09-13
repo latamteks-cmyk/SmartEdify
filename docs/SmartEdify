@@ -1,0 +1,67 @@
+Arquitectura SmartEdify
+
+```mermaid
+flowchart LR
+  subgraph UI[Frontend]
+    A[Web Admin]-->BFFA[BFF Admin]
+    U[Web User]-->BFFU[BFF App]
+    M[Móvil]-->BFFM[BFF Móvil]
+  end
+
+  BFFA-->GW[API Gateway+WAF]
+  BFFU-->GW
+  BFFM-->GW
+
+  subgraph L1[PMV · Línea 1]
+    ASSEMBLY[Assembly Service]
+    RES[Reservation Service]
+    MAINT[Maintenance Service]
+  end
+
+  subgraph L2[Soporte PMV · Línea 2]
+    AUTH[Auth Service]
+    USER[User Service + OPA]
+    TEN[Tenants Service]
+    DOC[Document Service]
+    COM[Communication Service]
+    FIN[Finance Service]
+  end
+
+  subgraph L3[Complementarios · Línea 3]
+    PAY[Payments]
+    COMP[Compliance]
+    PAYR[Payroll]
+    CERT[Certification]
+    BOT[Support-Bot]
+    SEC[Facility Security]
+  end
+
+  %% Norte-sur
+  GW-->AUTH
+  GW-->ASSEMBLY
+  GW-->RES
+  GW-->MAINT
+  GW-->USER
+  GW-->TEN
+  GW-->DOC
+  GW-->COM
+  GW-->FIN
+
+  %% Este-oeste a través de malla (simplificado)
+  ASSEMBLY-.mTLS/.->USER
+  ASSEMBLY-.mTLS/.->TEN
+  ASSEMBLY-.mTLS/.->DOC
+  ASSEMBLY-.mTLS/.->COM
+  ASSEMBLY-.mTLS/.->FIN
+
+  RES-.mTLS/.->TEN
+  RES-.mTLS/.->FIN
+  RES-.mTLS/.->COM
+
+  MAINT-.mTLS/.->DOC
+  MAINT-.mTLS/.->FIN
+  MAINT-.mTLS/.->COM
+
+  FIN-.eventos/.->PAY
+  ASSEMBLY-.reglas/.->COMP
+```
