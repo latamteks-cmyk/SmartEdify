@@ -1,13 +1,13 @@
-Desarrollo BA. Orquestación end-to-end y flujos por microservicio, con foco en **Assembly Service**. Frontends normalizados: **Web Administrador (WA)**, **Web User (WU)**, **App Móvil User (MU)**.
+Flujos BA actualizados. Un solo **Web App (RBAC)** para todos los roles; **Web Soporte** solo NOC; **App Móvil** solo user.
 
 # Orquestación SmartEdify (E2E)
 
 ```mermaid
 sequenceDiagram
   autonumber
-  actor WA as Web Administrador (staff/moderador)
-  actor WU as Web User (browser)
-  actor MU as App Móvil User
+  actor Web as Web App (RBAC)
+  actor Mob as App Móvil (User)
+  actor NOC as Web Soporte (NOC)
   participant ASM as Assembly Service
   participant AUT as Auth
   participant CMP as Compliance
@@ -16,121 +16,116 @@ sequenceDiagram
   participant DOC as Document
   participant MEET as Google Meet
 
-  WA->>ASM: Crear asamblea (tipo, fecha, agenda)
-  ASM->>CMP: Validar agenda/convocatoria
-  CMP-->>ASM: Dictamen OK/Observada
-  ASM->>MEET: Crear sala + config grabación/captions
-  ASM->>COM: Publicar convocatoria (link Meet, lugar físico)
-  COM-->>WU: Landing + botón Acceso
-  WU->>AUT: Login OIDC / MFA
-  MU->>AUT: Login OIDC / MFA (+ cámara ON en acreditación)
-  AUT-->>ASM: Token + tenant + scopes
+  Web->>AUT: Login OIDC + MFA (roles, scopes, tenant)
+  Mob->>AUT: Login OIDC + MFA
+  AUT-->>Web: Token
+  AUT-->>Mob: Token
+
+  Web->>ASM: Crear asamblea + agenda (rol: moderador/admin)
+  ASM->>CMP: Validar normativa (convocatoria, mayorías, plazos)
+  CMP-->>ASM: Dictamen OK/observada
+  ASM->>MEET: Crear sala, captions y grabación
+  ASM->>COM: Publicar convocatoria (PDF + meet link)
+  COM-->>Usuarios: Notificaciones multicanal
+  ASM->>DOC: Guardar convocatoria firmada/hashed
 
   par Acreditación
-    WA->>ASM: Check-in presencial (DNI/QR)
-    MU->>ASM: Check-in virtual (selfie/OTP)
+    Web->>ASM: Check-in presencial (DNI/QR)
+    Mob->>ASM: Check-in virtual (cámara ON)
   end
-  ASM->>FIN: Coeficientes/morosidad
-  ASM-->>WA: Quórum tiempo real (presencial+virtual)
+  ASM->>FIN: Cargar coeficientes/morosidad
+  ASM-->>Web: Quórum consolidado (SSE)
+  ASM-->>Mob: Quórum consolidado (SSE)
 
-  WA->>ASM: Abrir Ítem N
-  ASM-->>WU: Ventana de voto web
-  ASM-->>MU: Ventana de voto móvil
-  WU-->>ASM: Voto electrónico 1-uso
-  MU-->>ASM: Voto electrónico 1-uso
-  WA->>ASM: Voto presencial/Manual (con boleta)
+  Web->>ASM: Abrir Ítem N
+  ASM-->>Mob: Abrir ventana de voto (token 1-uso)
+  ASM-->>Web: Abrir voto para usuarios web
+  Mob-->>ASM: Voto electrónico (anti-replay)
+  Web-->>ASM: Registro voto web
+  Web->>ASM: Voto manual/boleta (solo moderador)
   ASM->>FIN: Consolidación ponderada
-  ASM-->>Todos: Resultado consolidado
+  ASM-->>Todos: Resultado ítem N
 
   ASM->>DOC: Borrador de acta + evidencias
   ASM->>MEET: Cerrar grabación
-  ASM->>DOC: Generar PDF + firma TSA
-  ASM->>COM: Notificar publicación de acta
-  DOC-->>WU: Descarga portal
-  DOC-->>MU: Descarga móvil
+  ASM->>DOC: Generar PDF + TSA
+  Web->>ASM: Firmar y publicar acta
+  ASM->>COM: Notificar publicación
+  DOC-->>Usuarios: Descarga portal/móvil
+  NOC->>ASM: Consultar métricas y auditoría (solo lectura)
 ```
 
-# Assembly Service — flujos detallados
+# Assembly Service — detalle por fase
 
-## 1) Antes: creación, validación y convocatoria
+## Antes
 
-**Objetivo:** sesión mixta legal y trazable.
-**Entradas:** tipo, jurisdicción, agenda preliminar, padrón, calendario.
-**Pasos BA:**
+**Entradas:** tipo, jurisdicción, agenda, plazos, padrón.
+**Pasos:**
 
-1. WA crea asamblea → `Draft`.
-2. ASM consulta CMP: reglas por jurisdicción, mayorías, plazos.
-3. ASM valida agenda; bloquea ítems observados; recalcula quórum esperado.
-4. ASM crea sala Meet y activa grabación/captions.
-5. ASM genera convocatoria: lugar físico + link Meet + instrucciones + soporte técnico.
-6. COM envía multicanal; DOC guarda PDF sellado; ASM cambia a `Notified`.
+1. Crear asamblea → estado `Draft`.
+2. Validar agenda/convocatoria con Compliance → `Validated`.
+3. Crear sala Meet y configuración de grabación/captions.
+4. Generar convocatoria PDF con instrucciones mixtas; sellar y guardar.
+5. Publicar convocatoria por Communication → `Notified`.
+   **Reglas:** solo ítems validados; plazos mínimos; hash y sello de tiempo obligatorios.
    **Salidas:** `agenda.validated`, `call.published`, `meet.created`.
-   **Excepciones:** reglas fallidas → corrección y revalidación.
 
-## 2) Acreditación y quórum en vivo
+## Durante
 
-**Objetivo:** identidad fehaciente y cómputo consolidado.
-**Entradas:** padrón, coeficientes, poderes.
-**Pasos:**
+**Acreditación y quórum**
 
-1. Presencial: WA registra check-in (DNI/QR).
-2. Virtual: WU/MU login OIDC + MFA; MU cámara ON; selfie opcional.
-3. ASM asocia poder y coeficiente vigente (FIN).
-4. ASM emite tablero de quórum público (SSE) para sala y Meet.
-   **Reglas:** dedupe persona+sesión; bloqueo si morosidad restringe voto; trazabilidad canal.
-   **Salidas:** `attendee.checked_in`, `quorum.updated`.
+* Presencial: DNI/QR en Web App.
+* Virtual: login + MFA + cámara ON en check-in (Móvil/Web).
+* Asociar poderes y coeficientes (Finance).
+* Tablero público de quórum por SSE para web y móvil.
+  **Eventos:** `attendee.checked_in`, `quorum.updated`.
 
-## 3) Moderación y votación unificada
+**Moderación y votación**
 
-**Objetivo:** voto único por propietario y consolidación transparente.
-**Pasos:**
+* Abrir ítem, step-up MFA si sensible.
+* Emitir tokens 1-uso por votante/ítem (JTI).
+* Anti-doble voto; recibo cifrado por voto.
+* Votos manuales requieren boleta escaneada y motivo.
+* Consolidar con Finance y publicar resultado en vivo.
+  **Eventos:** `vote.opened`, `manual.vote.recorded`, `vote.closed`, `vote.results_published`.
 
-1. WA abre Ítem N; ASM hace step-up MFA si sensible.
-2. ASM abre ventana de voto a WU/MU; entrega token 1-uso (JTI).
-3. WU/MU emiten voto; ASM valida anti-replay y genera recibo cifrado.
-4. Presencial: conteo visible; si manual, WA sube boleta → DOC.
-5. ASM consolida con FIN (ponderado) y publica resultado en vivo.
-6. Cierra ventana; guarda logs de apertura/cierre y hashes.
-   **Salidas:** `vote.closed`, `vote.results_published`.
-   **Excepciones:** empate o falta de quórum → procedimiento según CMP.
+**Incidencias**
 
-## 4) Acta, firma, publicación y archivo
+* Pausa/reanudación con sellos; mociones y objeciones auditadas.
+  **Eventos:** `session.paused|resumed`, `incident.logged`.
 
-**Objetivo:** documento legal, firmado y verificable.
-**Pasos:**
+## Después
 
-1. ASM arma borrador con MPC, clips referenciados, “Registros manuales”.
-2. DOC genera PDF, aplica TSA, LTV y manifiesto de evidencias.
-3. WA firma digital; ASM marca `Signed` → `Published`.
-4. COM distribuye; DOC archiva WORM con hash raíz.
-   **Salidas:** `minutes.signed`, `minutes.published`, `evidence.archived`.
-   **Excepciones:** fallo de firma → reintento; conflicto de versión → bloqueo optimista.
+**Acta y archivo**
+
+* Borrador automático con MPC + clips referenciados.
+* Sección “Registros manuales” con hashes y anexos.
+* Firma digital + TSA; publicación y notificación.
+* Archivo WORM del expediente con hash raíz.
+  **Eventos:** `minutes.signed`, `minutes.published`, `evidence.archived`.
 
 ---
 
-# Flujos por cliente
+# Flujos por interfaz
 
-**Web Administrador (WA)**
+## Web App (RBAC)
 
-* Crear/editar asamblea, agenda, convocatoria.
-* Acreditación presencial y poderes.
-* Moderación, apertura/cierre ítems, registros manuales con boleta obligatoria.
-* Validación visual de quórum y resultados.
-* Emisión y firma del acta, publicación.
+* **Moderador/Admin:** crear/validar asamblea, acreditación presencial, abrir/cerrar ítems, registrar manuales, firmar/publicar acta, ver auditoría.
+* **Propietario vía Web:** ver agenda, check-in virtual, votar, ver resultados, descargar acta.
+* **Secretario:** redactar observaciones, co-firmar acta.
+* **Soporte\_local:** monitoreo de sala, asistencia técnica, sin permisos de voto/manual.
 
-**Web User (WU)**
+## App Móvil (User)
 
-* Landing pública → Login.
-* Ver convocatoria y agenda.
-* Asistir virtual por navegador y votar.
-* Ver resultados y descargar acta.
-
-**App Móvil User (MU)**
-
-* Login + MFA + check-in con cámara.
-* Quórum y agenda en vivo.
+* Login + MFA.
+* Check-in con cámara, agenda/quórum en vivo.
 * Voto 1-uso con recibo.
 * Notificaciones y descarga de acta.
+
+## Web Soporte (NOC)
+
+* Métricas, trazas, auditoría, salud de servicios.
+* Solo lectura. Sin operación de asambleas.
 
 ---
 
@@ -138,76 +133,60 @@ sequenceDiagram
 
 ## Auth Service
 
-* **Login/OIDC:** authorize → token → refresh rotation.
-* **MFA step-up:** requerido al abrir voto sensible y firmar acta.
-* **Introspect/JWKS:** ASM valida token y scopes.
-* **Salidas:** `auth.session.created`, `auth.mfa.verified`.
+* **Login/Refresh/Step-up** para voto y firma.
+* **Emisión de claims**: `tenant_id`, `roles`, `scopes`.
+* **Auditoría** de sesiones y MFA.
 
 ## Compliance Service
 
-* **Validar agenda/convocatoria:** leyes aplicables, mayorías, plazos.
-* **Emitir dictamen:** `approved|observed` con referencias.
-* **Alertas:** cambios normativos impactan reglas.
-* **Salidas:** `compliance.validation.passed|failed`, `compliance.rule.updated`.
+* **Validación** de convocatoria/agenda/quórum y mayorías por jurisdicción.
+* **Dictamen** con referencias legales y plazos.
+* **Alertas** por cambios normativos.
 
 ## Finance Service
 
-* **Coeficientes y morosidad:** snapshot por asamblea.
-* **Cálculo ponderado:** consolidación de votos.
-* **Salidas:** `finance.coefficient.snapshotted`, `finance.vote.weighted`.
+* **Coeficientes** y estado de morosidad.
+* **Cálculo ponderado** por ítem y consolidación de resultados.
+* **Snapshots** por asamblea.
 
 ## Communication Service
 
-* **Convocatorias y recordatorios:** plantillas dinámicas, tracking.
-* **Publicación de acta:** multicanal con acuses.
-* **Salidas:** `comm.message.sent`, `comm.delivery.confirmed`.
+* **Convocatorias** con pruebas de envío y rebotes.
+* **Recordatorios** y **publicación de acta** con acuses.
 
 ## Document Service
 
-* **Convocatoria/Acta/Boletas:** almacenamiento, versiones, OCR.
-* **Firma digital + TSA:** evidencia LTV.
-* **WORM:** expediente, hash raíz del manifiesto.
-* **Salidas:** `document.stored`, `document.signed`, `document.retained`.
+* **Convocatoria/Acta/Boletas**: almacenamiento, versiones, OCR.
+* **Firma digital + TSA** y **WORM** del expediente.
+* **Manifiesto** con hash raíz.
 
-## Payments Service
+## Payments Service (opcional)
 
-* **Opcional:** cobros asociados a asamblea.
-* **Salidas:** `payments.intent.succeeded` → FIN concilia.
+* Cobros asociados a asambleas si aplica; retorno a Finance.
 
 ## SupportBot Service
 
-* **Onboarding/FAQ:** flujo guiado antes y durante sesión.
-* **Escalamiento:** crea incidencia a WA si hay problemas.
+* Onboarding y FAQs guiadas; escalamiento a soporte.
 
-## FacilitySecurity Service
+## FacilitySecurity/Reservation/Maintenance/Payroll/Certification
 
-* **Opcional:** monitoreo y control de accesos del local.
-* **Eventos:** `facsec.incident.detected` si aplica.
-
-## Reservation/Maintenance/Payroll/Certification
-
-* **Preparación del local y soporte A/V**, reservas, OTs, certificaciones del recinto, staff si aplica.
+* Soporte de recinto, reservas del salón, A/V, personal y cumplimiento del local cuando corresponda.
 
 ---
 
-# Artefactos, entradas y salidas clave
+# Reglas y controles transversales
 
-| Artefacto                   | Creador  | Guarda | Verifica  |
-| --------------------------- | -------- | ------ | --------- |
-| Convocatoria PDF + hash     | ASM      | DOC    | CMP       |
-| Registro de asistencia      | WA/MU/WU | ASM    | AUDIT     |
-| Boletas manuales            | WA       | DOC    | ASM       |
-| Logs de voto y recibos      | ASM      | DOC    | AUDIT     |
-| Acta firmada + TSA          | ASM/DOC  | DOC    | CMP       |
-| Expediente WORM + hash raíz | ASM/DOC  | DOC    | Auditoría |
+* **RBAC + ABAC** en APIs de Assembly: acción por rol y por ítem.
+* **Cámara ON** en check-in virtual.
+* **Anti-doble voto**: token JTI + índice único `(item_id, voter_id)` para `auto`.
+* **Manual = boleta obligatoria**; sin anexo es inválido.
+* **Quórum y resultados públicos** en tiempo real.
+* **Trazabilidad**: sellos, hashes, TSA, manifiesto WORM.
 
----
+# Entradas/Salidas por fase (mínimas)
 
-# Éxito y KPIs
+* **Antes:** entrada agenda+padrón → salida convocatoria validada + meet\_link.
+* **Durante:** entrada asistencias+votos → salida resultados consolidados + recibos.
+* **Después:** entrada borrador+evidencias → salida acta firmada publicada + expediente WORM.
 
-* % de convocatorias aprobadas sin observaciones.
-* p95 latencia open/close voto < 200 ms.
-* 0 doble voto detectado.
-* Tiempo emisión de acta firmada < 24 h.
-* % entregas de notificación de acta > 98%.
-
+¿Necesitas esto convertido a **BPMN 2.0** o al **contrato OpenAPI** de Assembly para implementación inmediata?
