@@ -77,7 +77,7 @@ Convenciones clave:
 
 ### 2.3 Reglas operativas y Diagrama de Flujo
 
-##Reglas operativas
+## Reglas operativas
 
 Clientes (UI Web Admin, Web User, Móvil) → BFF por canal → API Gateway → servicios PMV.
 
@@ -89,7 +89,7 @@ Egresos externos: SMS/Email/Payments solo vía Egress Gateway con allowlist y DL
 
 Eventos primero: comandos sincrónicos mínimos; todo lo demás, eventos con idempotencia.
 
-Diagrama (flujo recomendado)
+### Diagrama (flujo recomendado)
 
 ```mermaid
 flowchart LR
