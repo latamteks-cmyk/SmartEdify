@@ -402,41 +402,35 @@ Arquitectura propuesta de **Assembly Service**. Objetivo: sesiones mixtas legale
 # Vista C4 (Container)
 
 ```mermaid
-flowchart LR
-  subgraph Client
-    Web[Web Soporte]
-    Web[Web User]
-    Mobile[iOS/Android Propietarios\n'App SmartEdify']
+flowchart TB
+  subgraph Clients
+    WA[Web Administrador\n(soporte técnico, staff)]
+    WU[Web User\n(landing pública + login + portal user)]
+    MU[App Móvil\n(propietarios)]
   end
-  APIGW[API Gateway + WAF\nJWT validate + rate limit]
-  ASMSVC[Assembly Service\n'HTTP gRPC Events']
+
+  APIGW[API Gateway + WAF]
+  ASMSVC[Assembly Service]
   AUTH[Auth Service]
-  COMP[Compliance Service]
-  FIN[Finance Service]
   COMM[Communication Service]
   DOC[Document Service]
-  PAY[Payments Service]
-  MEET[Google Meet API]
-  BUS[Event Bus 'Kafka/NATS']
-  CACHE[Redis]
-  DB['PostgreSQL']
-  OBJ['S3/WORM']
-  TRACE[Observability\nOTel + Tempo/Jaeger + Prom]
+  FIN[Finance Service]
+  COMP[Compliance Service]
+  MEET[Google Meet]
 
-  Web --> APIGW --> ASMSVC
-  Mobile --> APIGW
+  WA --> APIGW --> ASMSVC
+  WU --> APIGW
+  MU --> APIGW
+  MU -.deep link .-> MEET
+  WU -.deep link .-> MEET
+
   ASMSVC --> AUTH
-  ASMSVC <--> COMP
-  ASMSVC <--> FIN
   ASMSVC --> COMM
   ASMSVC --> DOC
-  ASMSVC --> PAY
+  ASMSVC --> FIN
+  ASMSVC --> COMP
   ASMSVC --> MEET
-  ASMSVC --> BUS
-  ASMSVC --> CACHE
-  ASMSVC --> DB
-  DOC --> OBJ
-  ASMSVC --> TRACE
+
 ```
 
 # Descomposición interna (hexagonal)
