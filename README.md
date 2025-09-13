@@ -404,8 +404,9 @@ Arquitectura propuesta de **Assembly Service**. Objetivo: sesiones mixtas legale
 ```mermaid
 flowchart LR
   subgraph Client
-    Web[Web Admin]
-    Mobile[App Propietario]
+    Web[Web Soporte]
+    Web[Web User]
+    Mobile[iOS/Android Propietarios\n'App SmartEdify']
   end
   APIGW[API Gateway + WAF\nJWT validate + rate limit]
   ASMSVC[Assembly Service\n'HTTP gRPC Events']
