@@ -396,5 +396,3 @@ sequenceDiagram
 * Estados y eventos cerrados.
 * Campos críticos definidos para legalidad: `source=manual`, hashes, TSA, cámara ON en acreditación, quórum público.
 
-¿Deseas que convierta estos flujos en **BPMN 2.0 XML** o mantenerlos en **Mermaid** para la documentación viva?
-
