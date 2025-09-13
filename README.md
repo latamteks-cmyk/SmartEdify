@@ -404,8 +404,8 @@ Arquitectura propuesta de **Assembly Service**. Objetivo: sesiones mixtas legale
 ```mermaid
 flowchart TB
   subgraph Clients
-    WA[Web Administrador\n(soporte técnico, staff)]
-    WU[Web User\n(landing pública + login + portal user)]
+    WA[Web Administrador\n'soporte técnico, staff']
+    WU[Web User\n'landing pública + login + portal user']
     MU[App Móvil\n(propietarios)]
   end
 
