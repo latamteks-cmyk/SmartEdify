@@ -396,3 +396,190 @@ sequenceDiagram
 * Estados y eventos cerrados.
 * Campos críticos definidos para legalidad: `source=manual`, hashes, TSA, cámara ON en acreditación, quórum público.
 
+
+Arquitectura propuesta de **Assembly Service**. Objetivo: sesiones mixtas legales, auditables, resilientes. Estilo hexagonal, eventos primero, consistencia eventual controlada.
+
+# Vista C4 (Container)
+
+```mermaid
+flowchart LR
+  subgraph Client
+    Web[Web Admin]
+    Mobile[App Propietario]
+  end
+  APIGW[API Gateway + WAF\nJWT validate + rate limit]
+  ASMSVC[Assembly Service\n(HTTP gRPC Events)]
+  AUTH[Auth Service]
+  COMP[Compliance Service]
+  FIN[Finance Service]
+  COMM[Communication Service]
+  DOC[Document Service]
+  PAY[Payments Service]
+  MEET[Google Meet API]
+  BUS[Event Bus (Kafka/NATS)]
+  CACHE[Redis]
+  DB[(PostgreSQL)]
+  OBJ[(S3/WORM)]
+  TRACE[Observability\nOTel + Tempo/Jaeger + Prom]
+
+  Web --> APIGW --> ASMSVC
+  Mobile --> APIGW
+  ASMSVC --> AUTH
+  ASMSVC <--> COMP
+  ASMSVC <--> FIN
+  ASMSVC --> COMM
+  ASMSVC --> DOC
+  ASMSVC --> PAY
+  ASMSVC --> MEET
+  ASMSVC --> BUS
+  ASMSVC --> CACHE
+  ASMSVC --> DB
+  DOC --> OBJ
+  ASMSVC --> TRACE
+```
+
+# Descomposición interna (hexagonal)
+
+```mermaid
+flowchart TB
+  subgraph Application
+    CMD[Command Handlers]
+    QRY[Query Handlers]
+    SAGA[Sagas/Process Manager]
+    POL[Policies/Domain Rules]
+  end
+  subgraph Domain
+    AGG[Aggregates:\nAssembly, AgendaItem, VoteBatch, Quorum, Minutes]
+    EVT[Domain Events]
+    ACL[Access Control (roles, powers)]
+  end
+  subgraph Ports
+    Repo[Repositories]
+    MeetPort[MeetPort]
+    DocPort[DocPort]
+    CompPort[CompliancePort]
+    FinPort[FinancePort]
+    CommPort[CommPort]
+    IdPPort[AuthPort]
+    BusPort[EventPublisher]
+  end
+  INFRA[(Adapters: Postgres, Redis, Kafka, gRPC/REST, S3, JWKS)]
+  CMD --> AGG --> EVT --> SAGA
+  QRY --> Repo
+  Ports --> INFRA
+  POL --> AGG
+```
+
+# Módulos
+
+* **Assemblies**: ciclo de vida, estados, check-in, quórum.
+* **Voting**: ventanas, anti-doble voto, ponderación.
+* **ManualRecords**: alta manual con boleta obligatoria.
+* **Minutes**: borrador, firma, publicación, archivo.
+* **Integration**: Meet, Compliance, Finance, Document, Communication, Payments.
+* **Audit**: eventos, hashes, manifiesto de evidencias.
+* **Access**: enforcement de roles y poderes.
+
+# Datos (relacional normalizado)
+
+* `assemblies(id, tenant_id, tipo, modalidad, fecha, estado, meet_id, meet_link, compliance_validation_id, hash_convocatoria, created_at)`
+* `agenda_items(id, assembly_id, titulo, tipo_decision, mayoria, norma_ref, orden, estado)`
+* `attendees(id, assembly_id, persona_id, rol, canal, coeficiente, present, source ENUM['auto','manual'], manual_reason, manual_by, manual_evidence_id, created_at)`
+* `proxies(id, assembly_id, otorgante_id, apoderado_id, limite, vigencia, evidencia_doc_id)`
+* `votes(id, item_id, voter_id, mode, value, coef_aplicado, receipt_hash, source ENUM['auto','manual'], manual_reason, ballot_doc_id, overridden_vote_id, ts)`
+* `quorum_snapshots(id, assembly_id, ts, coef_presentes, coef_virtuales, coef_poderes)`
+* `minutes(id, assembly_id, status, url_pdf, hash, tsa_token, annex_boletas_manifest_id)`
+* `evidence(id, assembly_id, tipo, doc_id, hash, ts)`
+* `outbox(id, aggregate, event_type, payload, status)`  // transactional outbox
+
+Índices: `tenant_id`, `(assembly_id, estado)`, `(item_id, voter_id UNIQUE WHERE source='auto')`, `receipt_hash UNIQUE`.
+
+# API (REST + gRPC internos)
+
+**Prefix** `/api/assembly/v1/*`
+
+* Assemblies: `POST /assemblies`, `GET /assemblies/{id}`, `POST /assemblies/{id}/agenda/validate`, `POST /assemblies/{id}/call/publish`, `POST /assemblies/{id}/session/open|close|pause|resume`, `GET /assemblies/{id}/quorum/stream` (SSE).
+* Meet: `POST /assemblies/{id}/meet` (crear sala + captions + grabación), `POST /assemblies/{id}/meet/start|stop-recording`.
+* Attendees: `POST /assemblies/{id}/attendees/checkin`, `POST /assemblies/{id}/proxies`, `GET /assemblies/{id}/attendees`.
+* Voting: `POST /items/{itemId}/vote/open|close`, `POST /items/{itemId}/vote` (token de voto 1-uso), `GET /items/{itemId}/results`.
+* Manual: `POST /attendees/manual`, `POST /items/{itemId}/votes/manual`, `POST /votes/{voteId}/override`, `GET /assemblies/{id}/manual-records`.
+* Minutes: `POST /assemblies/{id}/minutes/draft`, `POST /assemblies/{id}/minutes/sign`, `POST /assemblies/{id}/minutes/publish`, `GET /assemblies/{id}/minutes`.
+
+Scopes: `assembly:read|write|admin`. Step-up MFA para `vote.open`, `minutes.sign`, `manual.*`.
+
+# Eventos (Kafka/NATS)
+
+* `assembly.created`, `agenda.validated`, `call.published`, `session.started|paused|resumed|closed`
+* `attendee.checked_in`, `proxy.registered`, `quorum.updated`
+* `vote.opened`, `vote.closed`, `vote.results_published`, `manual.attendee.added`, `manual.vote.recorded`, `vote.overridden`
+* `minutes.draft.updated`, `minutes.signed`, `minutes.published`, `evidence.archived`
+
+Diseño **outbox+inbox** para entrega al menos una vez. Idempotencia por `event_id`.
+
+# Integraciones
+
+* **Auth**: OIDC introspection, JWKS caché, WebAuthn, TOTP. Device binding opcional.
+* **Compliance**: sync validate; cache con TTL por jurisdicción.
+* **Finance**: coeficientes, morosidad, ponderación.
+* **Document**: subida de boletas, PDF de acta, manifiesto de evidencias, WORM, TSA.
+* **Communication**: convocatorias, recordatorios, publicación de acta.
+* **Payments**: cobros asociados si aplica.
+* **Google Meet**: creación de sala, start/stop recording, captions; almacenar IDs y hashes.
+
+# Seguridad
+
+* JWT validado en Gateway y revalidado en servicio. `tenant_id` obligatorio.
+* RBAC por rol y **poderes**; políticas a nivel de ítem.
+* **Anti-doble voto**: token de voto 1-uso (JTI + nonce) + unique index `(item_id, voter_id)` para `source='auto'`.
+* **Registros manuales**: requieran archivo en Document; bloqueo sin boleta.
+* **Evidencias**: hashes SHA-256, hash raíz de manifiesto, TSA en acta.
+* PII minimizada. Cifrado en tránsito (TLS) y en reposo (PG crypto-at-rest + S3 SSE-KMS).
+
+# Escalabilidad y rendimiento
+
+* Read-heavy: **CQRS light**. Queries denormalizadas en vistas materializadas (`assembly_view`, `results_view`), cache Redis.
+* WebSockets/SSE para quórum y resultados en tiempo real.
+* p95 < 200 ms en `vote.open/close`; >10k votos/min con partición por `tenant_id`.
+* Sharding por `tenant_id` en Kafka y claves en Redis.
+* Workers asíncronos para generación de actas y archivado.
+
+# Resiliencia y consistencia
+
+* **Sagas** para: convocatoria, sesión, votación por ítem, acta. Compensaciones: reenvío de comunicaciones, re-cierre de voto, reintento de firma, rearchivo WORM.
+* Retries exponenciales, circuit breakers a externos.
+* Modo degradado: si Meet falla, registrar fallback y permitir reanudación.
+
+# Observabilidad
+
+* OTel traces con `tenant_id`, `assembly_id`, `item_id`.
+* Métricas: TPS votos, latencia open/close, quorum drift, fallos manuales sin boleta, tiempo a publicación de acta.
+* Logs firmados y tamper-evident.
+
+# Tecnología sugerida
+
+* **Runtime**: Kotlin + Spring Boot o Go + chi/fx.
+* **DB**: PostgreSQL 15 + pgcrypto + logical decoding (future CDC).
+* **Cache**: Redis 7.
+* **Bus**: Kafka o NATS JetStream.
+* **Docs**: S3 compatible + Glacier; WORM.
+* **Infra**: Kubernetes, HPA por QPS y lag de cola.
+* **API**: OpenAPI 3.1 + gRPC internos.
+* **AuthN**: OIDC/OAuth2 provider externo (Auth Service).
+
+# Decisiones clave
+
+* Google Meet como único VC.
+* Manuales marcados e indisociables de boleta.
+* Legalidad: cámara ON en acreditación virtual, quórum público, resultados consolidados.
+* Outbox para fiabilidad de eventos.
+* CQRS light para UX en vivo.
+
+# Backlog técnico inmediato
+
+1. Esquema SQL y migraciones.
+2. OpenAPI por módulo.
+3. Adapters: MeetPort, DocPort, CompliancePort.
+4. Vistas materializadas y SSE para quórum/resultados.
+5. Sagas y outbox.
+6. Pruebas de carga de voto y latencia.
+
