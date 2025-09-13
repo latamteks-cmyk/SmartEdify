@@ -1,4 +1,33 @@
 Arquitectura SmartEdify
+
+
+
+
+### 1.2 Arquitectura de Despliegue (Producción)
+
+```mermaid
+graph LR
+subgraph "VPC Prod - us-east-1"
+A[API Gateway] --> B[Ingress Control /n 'NGINX Ingress']
+B --> C[EKS Cluster  Nodes m6i.large]
+C --> D[Auth Service  /n 'ReplicaSet: 4']
+C --> E[Redis Clus /n 3 shards, 1 replica]
+C --> F[PostgreSQL  /n db.r6g.xlarge, Multi-AZ]
+C --> G[Kafka Clus /n 3 brokers, 3 replicas]
+D --> H[AWS Cloud /n Claves JWT & RSA]
+D --> I[AWS Secrets Mana /n Configuraciones, Tokens]
+D --> J[IPFS Pinn /n Pinata]
+D --> K[Event  /n Kafka]
+L[CloudWatch] --> D
+M[Prometheus] --> D
+N[Jaeger] --> D
+end
+
+O[Client] -->|HTTPS + DPoP| A
+P[Partner App] -->|"OAuth 2.1 + MTLS"| A
+```
+
+
 ### 2.3 Flujo de Pruebas E2E Crítico (Login + Transferencia de Presidencia)
 ```mermaid
 flowchart LR
