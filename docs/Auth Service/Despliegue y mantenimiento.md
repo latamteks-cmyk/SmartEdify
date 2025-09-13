@@ -29,24 +29,24 @@
 
 ```mermaid
 graph LR
-    subgraph "VPC Prod - us-east-1"
-        A[API Gateway] --> B[Ingress Controller<br>(NGINX Ingress)]
-        B --> C[EKS Cluster<br>6 Nodes m6i.large]
-        C --> D[Auth Service Pod<br>(ReplicaSet: 4)]
-        C --> E[Redis Cluster<br>3 shards, 1 replica]
-        C --> F[PostgreSQL RDS<br>db.r6g.xlarge, Multi-AZ]
-        C --> G[Kafka Cluster<br>3 brokers, 3 replicas]
-        D --> H[AWS CloudHSM<br>Claves JWT & RSA]
-        D --> I[AWS Secrets Manager<br>Configuraciones, Tokens]
-        D --> J[IPFS Pinning<br>Pinata]
-        D --> K[Event Bus<br>Kafka]
-        L[CloudWatch] --> D
-        M[Prometheus] --> D
-        N[Jaeger] --> D
-    end
+subgraph "VPC Prod - us-east-1"
+A[API Gateway] --> B[Ingress Control /n 'NGINX Ingress']
+B --> C[EKS Cluster  Nodes m6i.large]
+C --> D[Auth Service  /n 'ReplicaSet: 4']
+C --> E[Redis Clus /n 3 shards, 1 replica]
+C --> F[PostgreSQL  /n db.r6g.xlarge, Multi-AZ]
+C --> G[Kafka Clus /n 3 brokers, 3 replicas]
+D --> H[AWS Cloud /n Claves JWT & RSA]
+D --> I[AWS Secrets Mana /n Configuraciones, Tokens]
+D --> J[IPFS Pinn /n Pinata]
+D --> K[Event  /n Kafka]
+L[CloudWatch] --> D
+M[Prometheus] --> D
+N[Jaeger] --> D
+end
 
-    O[Client] -->|HTTPS + DPoP| A
-    P[Partner App] -->|OAuth 2.1 + MTLS| A
+O[Client] -->|HTTPS + DPoP| A
+P[Partner App] -->|"OAuth 2.1 + MTLS"| A
 ```
 
 ### 1.3 Flujo de Despliegue Automatizado (CI/CD)
