@@ -406,7 +406,7 @@ flowchart TB
   subgraph Clients
     WA[Web Administrador\n'soporte técnico, staff']
     WU[Web User\n'landing pública + login + portal user']
-    MU[App Móvil\n(propietarios)]
+    MU[App Móvil\n'propietarios']
   end
 
   APIGW[API Gateway + WAF]
