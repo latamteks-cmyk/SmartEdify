@@ -68,10 +68,10 @@ sequenceDiagram
   participant Redis as Session Store
   User->>Client: /login
   Client->>Auth: /authorize?response_type=code&code_challenge
-  Auth->>User: MFA (TOTP/WebAuthn)
+  Auth->>User: MFA 'TOTP/WebAuthn'
   User-->>Auth: Verificado
   Auth-->>Client: redirect_uri?code=...
-  Client->>Auth: /token (code_verifier)
+  Client->>Auth: /token 'code_verifier'
   Auth->>Redis: crear sesión + refresh rotado
   Auth-->>Client: id_token + access_token + refresh_token
 ```
