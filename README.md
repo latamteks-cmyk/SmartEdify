@@ -416,10 +416,10 @@ flowchart LR
   DOC[Document Service]
   PAY[Payments Service]
   MEET[Google Meet API]
-  BUS[Event Bus (Kafka/NATS)]
+  BUS[Event Bus 'Kafka/NATS']
   CACHE[Redis]
-  DB[(PostgreSQL)]
-  OBJ[(S3/WORM)]
+  DB['PostgreSQL']
+  OBJ['S3/WORM']
   TRACE[Observability\nOTel + Tempo/Jaeger + Prom]
 
   Web --> APIGW --> ASMSVC
