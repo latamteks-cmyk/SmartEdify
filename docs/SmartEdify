@@ -1,5 +1,5 @@
 Arquitectura SmartEdify
-
+### 2.3 Flujo de Pruebas E2E Crítico (Login + Transferencia de Presidencia)
 ```mermaid
 flowchart LR
   subgraph UI[Frontend]
