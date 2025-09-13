@@ -110,7 +110,7 @@ flowchart LR
     APIGW[API Gateway/WAF\nJWT check, rate limit]
   end
   subgraph AuthCluster
-    AUTHAPI[Auth API\n(REST/OIDC)]
+    AUTHAPI[Auth API\n'REST/OIDC']
     AUTHCORE[Auth Core\n'OAuth2/OIDC, MFA, Sessions']
     KEY[Key Manager\n'JWK Rotate, KMS/HSM']
     INTROS[Token Introspection]
