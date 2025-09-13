@@ -80,7 +80,7 @@ graph TD
     %% ===== CLIENTES ======
     subgraph Clientes
         A[App Móvil / PWA] -->|HTTPS + DPoP| B[API Gateway]
-        C[Partner App "OAuth"] -->|"OAuth 2.1 + DPoP"| B
+        C[Partner App "OAuth"] -->|"OAuth 2-1 con DPoP"| B
         D[Admin Web] -->|HTTPS + MTLS| B
         E[Soporte Humano] -->|IVR/WhatsApp| F[Auth Service]
     end
