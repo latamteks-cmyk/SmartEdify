@@ -89,7 +89,7 @@ Egresos externos: SMS/Email/Payments solo vía Egress Gateway con allowlist y DL
 
 Eventos primero: comandos sincrónicos mínimos; todo lo demás, eventos con idempotencia.
 
-### Diagrama (flujo recomendado)
+### Diagrama acordado
 
 ```mermaid
 flowchart LR
