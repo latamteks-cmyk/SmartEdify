@@ -75,34 +75,22 @@ Convenciones clave:
 * `platform/mesh` gobierna tráfico este-oeste; Gateway solo norte-sur.
 * `doc/adr` registra decisiones; cambios breaking requieren ADR y versión de contrato.
 
+### 2.3 Reglas operativas y Diagrama de Flujo
 
+##Reglas operativas
 
+Clientes (UI Web Admin, Web User, Móvil) → BFF por canal → API Gateway → servicios PMV.
 
+Servicio→Servicio: solo por malla, nunca por Gateway. Autorización con OAuth2 m2m (client credentials) o JWT exchange corto.
 
-```mermaid
-graph LR
-subgraph "VPC Prod - us-east-1"
-A[API Gateway] --> B[Ingress Control /n 'NGINX Ingress']
-B --> C[EKS Cluster  Nodes m6i.large]
-C --> D[Auth Service  /n 'ReplicaSet: 4']
-C --> E[Redis Clus /n 3 shards, 1 replica]
-C --> F[PostgreSQL  /n db.r6g.xlarge, Multi-AZ]
-C --> G[Kafka Clus /n 3 brokers, 3 replicas]
-D --> H[AWS Cloud /n Claves JWT & RSA]
-D --> I[AWS Secrets Mana /n Configuraciones, Tokens]
-D --> J[IPFS Pinn /n Pinata]
-D --> K[Event  /n Kafka]
-L[CloudWatch] --> D
-M[Prometheus] --> D
-N[Jaeger] --> D
-end
+Identidad multi-tenant: tenant_id en JWT del usuario; cada servicio revalida políticas con User/OPA y aplica RLS.
 
-O[Client] -->|HTTPS + DPoP| A
-P[Partner App] -->|"OAuth 2.1 + MTLS"| A
-```
+Egresos externos: SMS/Email/Payments solo vía Egress Gateway con allowlist y DLP.
 
+Eventos primero: comandos sincrónicos mínimos; todo lo demás, eventos con idempotencia.
 
-### 2.3 Flujo de Pruebas E2E Crítico (Login + Transferencia de Presidencia)
+Diagrama (flujo recomendado)
+
 ```mermaid
 flowchart LR
   subgraph UI[Frontend]
