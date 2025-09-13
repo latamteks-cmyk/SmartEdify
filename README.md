@@ -156,3 +156,245 @@ flowchart LR
   FIN-.eventos/.->PAY
   ASSEMBLY-.reglas/.->COMP
 ```
+
+Aquí tienes los flujos, nivel BA. Primero orquestación SmartEdify. Luego cada microservicio. Assembly Service al detalle.
+
+# Orquestación SmartEdify (end-to-end)
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor Admin as Moderador/Administrador
+  participant ASM as Assembly Service
+  participant CMP as Compliance Service
+  participant COM as Communication Service
+  participant AUT as Auth Service
+  participant FIN as Finance Service
+  participant DOC as Document Service
+  participant PAY as Payments Service
+  participant MEET as Google Meet
+
+  Admin->>ASM: Crear asamblea (tipo, fecha, agenda)
+  ASM->>CMP: Validar convocatoria/agenda
+  CMP-->>ASM: OK + reglas aplicables
+  ASM->>COM: Generar convocatoria multicanal (meet_link)
+  ASM->>MEET: Crear sala + grabación/captions
+  COM-->>Propietarios: Avisos enviados
+
+  Note over Admin,ASM: Fase “Antes”
+
+  participant Pres as Asistente presencial
+  participant Virt as Asistente virtual
+  Pres->>ASM: Check-in QR + DNI
+  Virt->>AUT: Login OIDC + MFA (cámara ON en acreditación)
+  AUT-->>ASM: Token válido + identidad
+  ASM->>FIN: Traer coeficientes y morosidad
+  ASM-->>Admin: Quórum tiempo real
+
+  Note over Admin,ASM: Fase “Durante”
+
+  Admin->>ASM: Abrir Ítem 1
+  ASM->>Virt: Apertura voto electrónico
+  ASM->>Pres: Conteo presencial (boletas/hand)
+  Virt-->>ASM: Votos electrónicos
+  Admin->>ASM: Registro manual si aplica (boleta obligatoria)
+  ASM->>FIN: Cálculo ponderado
+  ASM-->>Todos: Resultado consolidado
+
+  ASM->>DOC: Borrador de acta + evidencias
+  ASM->>MEET: Cerrar grabación
+  ASM->>DOC: Generar acta final (PDF)
+  DOC->>Firma: Flujo de firma + TSA
+  ASM->>COM: Publicar y notificar acta
+  ASM->>DOC: Archivar WORM (expediente + hash raíz)
+```
+
+# Assembly Service — detalle por flujo
+
+## 0) Ciclo de vida y estados
+
+```mermaid
+stateDiagram-v2
+  [*] --> Draft
+  Draft --> Validated: agenda.validated (Compliance OK)
+  Validated --> Notified: call.published
+  Notified --> CheckInOpen: session.opened
+  CheckInOpen --> InSession: quorum.reached | session.started
+  InSession --> Paused: session.paused
+  Paused --> InSession: session.resumed
+  InSession --> Voting: vote.opened(item)
+  Voting --> InSession: vote.closed(item)
+  InSession --> MinutesDraft: session.closed
+  MinutesDraft --> Signed: minutes.signed
+  Signed --> Published: minutes.published
+  Published --> Archived: evidence.archived(WORM)
+  Archived --> [*]
+```
+
+## 1) Creación y validación de asamblea
+
+* Input: tipo, jurisdicción, fecha, agenda preliminar, reglas del reglamento.
+* Pasos:
+
+  1. `POST /assemblies` → estado `Draft`.
+  2. `POST /assemblies/{id}/agenda/validate` → Compliance valida plazos, mayorías, quórum por ítem.
+  3. `POST /assemblies/{id}/meet` → crea sala Meet, activa captions y esquema de grabación.
+  4. `POST /assemblies/{id}/call/publish` → Communication envía convocatoria; Document guarda PDF con hash.
+* Salidas: `agenda.validated`, `call.published`, `meet.created`.
+
+## 2) Acreditación y check-in
+
+* Presencial: escaneo QR, verificación DNI, device binding opcional.
+* Virtual: OIDC + MFA; **cámara ON** durante acreditación.
+* Poderes: carga y validación de tope.
+* Datos guardados: `attendee.source`, coeficiente, canal, evidencias.
+* Eventos: `attendee.checked_in`, `proxy.registered`.
+* Reglas: deduplicación por persona; bloqueo si morosidad afecta voto.
+
+## 3) Cómputo de quórum en vivo
+
+* Motor consolida: presencial + virtual + representados.
+* UI: tablero público espejo para sala y para Meet.
+* KPI: p95 < 1 s para refresco.
+* Evento: `quorum.updated`. Umbrales por ítem disponibles.
+
+## 4) Moderación y órdenes del día
+
+* Abrir/cerrar ítems secuenciales.
+* Turnos de palabra: cola unificada.
+* Incidencias: moción, objeción, pausa con sello de tiempo.
+* Eventos: `item.opened`, `incident.logged`, `item.closed`.
+
+## 5) Votación electrónica unificada
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant Admin
+  participant ASM
+  participant AUT as Auth
+  participant FIN as Finance
+  participant DOC as Document
+
+  Admin->>ASM: Abrir voto (ítem N, regla)
+  ASM->>AUT: Introspect token + step-up MFA si sensible
+  ASM->>FIN: Traer coeficiente vigente
+  ASM-->>Votantes: Ventana de voto abierta
+  Votantes-->>ASM: Emiten voto (1 sola vez)
+  ASM->>ASM: Anti doble voto + recibo cifrado
+  Admin->>ASM: Registrar votos manuales (boleta obligatoria)
+  ASM->>DOC: Anexar boletas manuales (hash)
+  ASM->>FIN: Consolidar ponderado
+  ASM-->>Todos: Resultado ítem N
+  ASM->>DOC: Log de apertura/cierre + recibos
+```
+
+* Modos: nominal, secreto, coeficiente, delegados, bloque.
+* Manual: solo moderador. Campo `source=manual`, `ballot_url` obligatorio.
+* Seguridad: one-time vote token, replay guard, nonces, hashing de recibo.
+* Evento: `vote.closed`, `vote.results_published`.
+
+## 6) Redacción de acta en vivo
+
+* Borrador incremental: resúmenes MPC + marcadores a clips.
+* Sección fija “Registros manuales”.
+* Evidencias: convocatoria, asistentes, poderes, logs voto, grabación, hashes.
+* Salida: `draft.updated` → PDF provisional en Document.
+
+## 7) Firma, publicación y archivo
+
+* Firma digital cualificada + TSA.
+* `minutes.signed` → `minutes.published` → notificación multicanal.
+* Archivo WORM: expediente + **hash raíz** de manifiesto.
+* Eventos: `minutes.signed`, `minutes.published`, `evidence.archived`.
+
+## 8) Post: acuerdos, seguimiento, impugnaciones
+
+* Plan de tareas por acuerdo (responsable, fecha).
+* Ventana de impugnación según Compliance.
+* Recordatorios y reporte de cumplimiento.
+
+---
+
+# Workflows por microservicio
+
+## Auth Service
+
+* **Login**: `/oidc/authorize` → MFA (TOTP/WebAuthn) → token con `tenant_id` y scopes.
+* **Step-up**: solicitar MFA para abrir votos sensibles.
+* **Introspect/Revocar**: tokens rotados; eventos de seguridad auditados.
+
+## Compliance Service
+
+* **Validación**: entrada agenda + jurisdicción → reglas aplicables → dictamen.
+* **Alertas**: cambios normativos → `compliance.rule.updated`.
+* **Cálculo**: mayorías por ítem, plazos, requisitos de convocatoria y firma.
+
+## Finance Service
+
+* **Coeficientes**: padrón, alícuotas, morosidad.
+* **Cobranzas**: conciliación si hay pagos de convocatoria o multas de asamblea.
+* **Estados**: exposición de coeficiente vigente por persona.
+
+## Payments Service
+
+* **Intents**: cobro de derechos o servicios ligados a la asamblea.
+* **Webhooks**: `payment_succeeded` → Finance concilia.
+
+## Communication Service
+
+* **Convocatoria**: plantillas, multicanal, acuse y rebote.
+* **Sesión**: recordatorios, cambio de sala, emergencias.
+* **Publicación**: distribución de acta y acuerdos.
+
+## Document Service
+
+* **Almacenamiento**: S3, versiones, OCR.
+* **Firma**: flujo con TSA, evidencia LTV.
+* **WORM**: expediente con índice y hashes; compendio de boletas.
+
+## SupportBot Service
+
+* **Onboarding**: guía paso a paso para asistentes.
+* **FAQ**: micropolíticas de voto, quórum, soporte técnico.
+* **Escalamiento**: integra con Communication si hay incidentes.
+
+## FacilitySecurity Service
+
+* **Perímetro**: monitoreo de cámaras durante eventos grandes.
+* **Accesos**: registro de apertura/cierre si se usa control facial.
+* **Privacidad**: solo eventos y metadatos al acta si procede.
+
+## Reservation Service
+
+* **Espacios**: bloqueo y logística del salón.
+* **Calendario**: evitar choques con otras reservas.
+* **Costos**: traspaso a Finance si aplica.
+
+## Maintenance Service
+
+* **Soporte**: equipos A/V, micrófonos, UPS, conectividad.
+* **OTs**: instalación, prueba, contingencia.
+* **Post**: correctivos si falló equipamiento.
+
+## Payroll Service
+
+* **Roles**: validación de moderador/secretario si son staff.
+* **Trazabilidad**: asistencia de personal en evento.
+* **Documentos**: export regulatorios si aplica.
+
+## Certification Service
+
+* **Cumplimientos**: seguridad del local, aforo, rutas de evacuación.
+* **Inspecciones**: registros y hallazgos anexables al expediente.
+
+---
+
+# Entregables operativos rápidos
+
+* Diagramas incluidos.
+* Estados y eventos cerrados.
+* Campos críticos definidos para legalidad: `source=manual`, hashes, TSA, cámara ON en acreditación, quórum público.
+
+¿Deseas que convierta estos flujos en **BPMN 2.0 XML** o mantenerlos en **Mermaid** para la documentación viva?
+
