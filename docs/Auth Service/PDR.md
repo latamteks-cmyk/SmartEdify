@@ -111,14 +111,14 @@ flowchart LR
   end
   subgraph AuthCluster
     AUTHAPI[Auth API\n(REST/OIDC)]
-    AUTHCORE[Auth Core\n(OAuth2/OIDC, MFA, Sessions)]
-    KEY[Key Manager\n(JWK Rotate, KMS/HSM)]
+    AUTHCORE[Auth Core\n'OAuth2/OIDC, MFA, Sessions']
+    KEY[Key Manager\n'JWK Rotate, KMS/HSM']
     INTROS[Token Introspection]
-    ADMIN[Admin Console\n(tenants, clients, roles)]
-    WORK[Async Workers\n(revocations, audit export)]
+    ADMIN[Admin Console\n'tenants, clients, roles']
+    WORK[Async Workers\n'revocations, audit export']
   end
-  REDIS[(Redis Cluster)]
-  PG[(PostgreSQL)]
+  REDIS['Redis Cluster']
+  PG['PostgreSQL']
   KMS[HSM/KMS]
   PROM[OTel/Prom/Grafana]
   APIGW-->AUTHAPI
