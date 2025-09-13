@@ -446,7 +446,7 @@ flowchart TB
   subgraph Domain
     AGG[Aggregates:\nAssembly, AgendaItem, VoteBatch, Quorum, Minutes]
     EVT[Domain Events]
-    ACL[Access Control (roles, powers)]
+    ACL[Access Control 'roles, powers']
   end
   subgraph Ports
     Repo[Repositories]
