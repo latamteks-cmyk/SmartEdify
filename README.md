@@ -408,7 +408,7 @@ flowchart LR
     Mobile[App Propietario]
   end
   APIGW[API Gateway + WAF\nJWT validate + rate limit]
-  ASMSVC[Assembly Service\n(HTTP gRPC Events)]
+  ASMSVC[Assembly Service\n'HTTP gRPC Events']
   AUTH[Auth Service]
   COMP[Compliance Service]
   FIN[Finance Service]
