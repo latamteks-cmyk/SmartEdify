@@ -234,10 +234,3 @@ Un servicio de autenticación que:
 >   
 > Esta no es una función. Es una revolución.  
 > Y empezamos hoy.”
-
----
-
-✅ **Próximos pasos**:  
-- Entregar este PRD al equipo de diseño y desarrollo.  
-- Iniciar sprint 1: Implementar **Login por WhatsApp** y **Actas Digitales**.  
-- Validar con 3 síndicos en Lima y Arequipa antes de la primera versión beta.
