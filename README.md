@@ -1,0 +1,89 @@
+```mermaid
+graph LR
+subgraph "VPC Prod - us-east-1"
+A[API Gateway] --> B[Ingress Control /n 'NGINX Ingress']
+B --> C[EKS Cluster  Nodes m6i.large]
+C --> D[Auth Service  /n 'ReplicaSet: 4']
+C --> E[Redis Clus /n 3 shards, 1 replica]
+C --> F[PostgreSQL  /n db.r6g.xlarge, Multi-AZ]
+C --> G[Kafka Clus /n 3 brokers, 3 replicas]
+D --> H[AWS Cloud /n Claves JWT & RSA]
+D --> I[AWS Secrets Mana /n Configuraciones, Tokens]
+D --> J[IPFS Pinn /n Pinata]
+D --> K[Event  /n Kafka]
+L[CloudWatch] --> D
+M[Prometheus] --> D
+N[Jaeger] --> D
+end
+
+O[Client] -->|HTTPS + DPoP| A
+P[Partner App] -->|"OAuth 2.1 + MTLS"| A
+```
+
+
+### 2.3 Flujo de Pruebas E2E Crítico (Login + Transferencia de Presidencia)
+```mermaid
+flowchart LR
+  subgraph UI[Frontend]
+    A[Web Admin]-->BFFA[BFF Admin]
+    U[Web User]-->BFFU[BFF App]
+    M[Móvil]-->BFFM[BFF Móvil]
+  end
+
+  BFFA-->GW[API Gateway+WAF]
+  BFFU-->GW
+  BFFM-->GW
+
+  subgraph L1[PMV · Línea 1]
+    ASSEMBLY[Assembly Service]
+    RES[Reservation Service]
+    MAINT[Maintenance Service]
+  end
+
+  subgraph L2[Soporte PMV · Línea 2]
+    AUTH[Auth Service]
+    USER[User Service + OPA]
+    TEN[Tenants Service]
+    DOC[Document Service]
+    COM[Communication Service]
+    FIN[Finance Service]
+  end
+
+  subgraph L3[Complementarios · Línea 3]
+    PAY[Payments]
+    COMP[Compliance]
+    PAYR[Payroll]
+    CERT[Certification]
+    BOT[Support-Bot]
+    SEC[Facility Security]
+  end
+
+  %% Norte-sur
+  GW-->AUTH
+  GW-->ASSEMBLY
+  GW-->RES
+  GW-->MAINT
+  GW-->USER
+  GW-->TEN
+  GW-->DOC
+  GW-->COM
+  GW-->FIN
+
+  %% Este-oeste a través de malla (simplificado)
+  ASSEMBLY-.mTLS/.->USER
+  ASSEMBLY-.mTLS/.->TEN
+  ASSEMBLY-.mTLS/.->DOC
+  ASSEMBLY-.mTLS/.->COM
+  ASSEMBLY-.mTLS/.->FIN
+
+  RES-.mTLS/.->TEN
+  RES-.mTLS/.->FIN
+  RES-.mTLS/.->COM
+
+  MAINT-.mTLS/.->DOC
+  MAINT-.mTLS/.->FIN
+  MAINT-.mTLS/.->COM
+
+  FIN-.eventos/.->PAY
+  ASSEMBLY-.reglas/.->COMP
+```
